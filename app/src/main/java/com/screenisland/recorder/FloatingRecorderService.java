@@ -6,14 +6,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
-import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.MediaRecorder;
@@ -21,17 +17,18 @@ import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
-import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
+
+import com.screenisland.recorder.island.FloatingIslandView;
+import com.screenisland.recorder.island.IslandTheme;
 
 import java.io.File;
 import java.io.IOException;
@@ -39,7 +36,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-public class FloatingRecorderService extends Service {
+public class FloatingRecorderService extends Service implements FloatingIslandView.Callback {
     public static final String ACTION_OPEN_ISLAND = "com.screenisland.recorder.OPEN_ISLAND";
     public static final String ACTION_START_RECORDING = "com.screenisland.recorder.START_RECORDING";
     public static final String ACTION_STOP_RECORDING = "com.screenisland.recorder.STOP_RECORDING";
@@ -48,19 +45,14 @@ public class FloatingRecorderService extends Service {
     public static final String EXTRA_RESULT_DATA = "result_data";
     public static final String EXTRA_RECORD_AUDIO = "record_audio";
     public static final String EXTRA_HIGH_QUALITY = "high_quality";
+    public static final String EXTRA_COUNTDOWN = "countdown";
+    public static final String EXTRA_COMPACT = "compact";
 
     private static final int NOTIFICATION_ID = 42;
     private static final String CHANNEL_ID = "screen_island_recorder";
-    private static final int COLOR_PANEL = Color.rgb(14, 18, 28);
-    private static final int COLOR_PANEL_LIGHT = Color.rgb(30, 39, 58);
-    private static final int COLOR_ACCENT = Color.rgb(105, 92, 255);
-    private static final int COLOR_RECORD = Color.rgb(255, 71, 87);
-    private static final int COLOR_GO = Color.rgb(0, 224, 132);
 
     private WindowManager windowManager;
-    private LinearLayout islandView;
-    private TextView stateText;
-    private Button recordButton;
+    private FloatingIslandView islandView;
     private WindowManager.LayoutParams islandParams;
     private MediaProjection mediaProjection;
     private MediaRecorder mediaRecorder;
@@ -69,12 +61,29 @@ public class FloatingRecorderService extends Service {
     private int projectionResultCode;
     private boolean recordAudio;
     private boolean highQuality;
+    private boolean countdown;
+    private boolean compact;
     private boolean recording;
+    private boolean paused;
+    private boolean countingDown;
     private File currentOutputFile;
     private float downX;
     private float downY;
     private int startX;
     private int startY;
+    private long recordStartedAt;
+    private long elapsedBeforePause;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final Runnable ticker = new Runnable() {
+        @Override
+        public void run() {
+            updateIslandState();
+            if (recording || countingDown) {
+                handler.postDelayed(this, 500);
+            }
+        }
+    };
 
     @Override
     public void onCreate() {
@@ -95,9 +104,11 @@ public class FloatingRecorderService extends Service {
             projectionData = intent.getParcelableExtra(EXTRA_RESULT_DATA);
             recordAudio = intent.getBooleanExtra(EXTRA_RECORD_AUDIO, false);
             highQuality = intent.getBooleanExtra(EXTRA_HIGH_QUALITY, true);
+            countdown = intent.getBooleanExtra(EXTRA_COUNTDOWN, true);
+            compact = intent.getBooleanExtra(EXTRA_COMPACT, false);
             showIsland();
         } else if (ACTION_START_RECORDING.equals(action)) {
-            startRecording();
+            requestStartRecording();
         } else if (ACTION_STOP_RECORDING.equals(action)) {
             stopRecording(true);
         } else if (ACTION_CLOSE.equals(action)) {
@@ -110,6 +121,7 @@ public class FloatingRecorderService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        handler.removeCallbacksAndMessages(null);
         stopRecording(false);
         if (islandView != null && windowManager != null) {
             windowManager.removeView(islandView);
@@ -126,75 +138,70 @@ public class FloatingRecorderService extends Service {
         return null;
     }
 
+    @Override
+    public void onRecordToggle() {
+        if (recording) {
+            stopRecording(true);
+        } else {
+            requestStartRecording();
+        }
+    }
+
+    @Override
+    public void onPauseToggle() {
+        togglePause();
+    }
+
+    @Override
+    public void onSettings() {
+        openSettings();
+    }
+
+    @Override
+    public void onClose() {
+        stopRecording(false);
+        stopSelf();
+    }
+
     private void showIsland() {
         if (!canDrawOverlays()) {
             toast("Overlay izni yok");
             return;
         }
         if (islandView != null) {
+            islandView.setExpanded(!compact);
             updateIslandState();
             return;
         }
-        islandView = new LinearLayout(this);
-        islandView.setOrientation(LinearLayout.VERTICAL);
-        islandView.setPadding(dp(10), dp(8), dp(10), dp(10));
-        islandView.setBackground(rounded(COLOR_PANEL, dp(24)));
-        islandView.setGravity(Gravity.CENTER);
+        islandView = new FloatingIslandView(this, this);
+        islandView.setExpanded(!compact);
+        islandView.setOnTouchListener(new android.view.View.OnTouchListener() {
+            private boolean moved;
 
-        TextView title = new TextView(this);
-        title.setText("● Screen Island");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(14f);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        islandView.addView(title, wrapWrap());
-
-        stateText = new TextView(this);
-        stateText.setTextColor(Color.rgb(180, 190, 210));
-        stateText.setTextSize(12f);
-        stateText.setPadding(0, dp(3), 0, dp(5));
-        islandView.addView(stateText, wrapWrap());
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        recordButton = smallButton("REC", COLOR_RECORD, Color.WHITE, new View.OnClickListener() {
             @Override
-            public void onClick(View view) {
-                if (recording) {
-                    stopRecording(true);
-                } else {
-                    startRecording();
-                }
-            }
-        });
-        row.addView(recordButton, wrapWrapWithMargins(0, 0, dp(6), 0));
-        row.addView(smallButton("Ayarlar", COLOR_PANEL_LIGHT, Color.WHITE, new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                openSettings();
-            }
-        }), wrapWrapWithMargins(0, 0, dp(6), 0));
-        row.addView(smallButton("×", COLOR_PANEL_LIGHT, Color.WHITE, new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stopSelf();
-            }
-        }), wrapWrap());
-        islandView.addView(row, wrapWrap());
-
-        islandView.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View view, MotionEvent event) {
+            public boolean onTouch(android.view.View view, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
+                        moved = false;
                         downX = event.getRawX();
                         downY = event.getRawY();
                         startX = islandParams.x;
                         startY = islandParams.y;
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        islandParams.x = startX + (int) (event.getRawX() - downX);
-                        islandParams.y = startY + (int) (event.getRawY() - downY);
+                        int dx = (int) (event.getRawX() - downX);
+                        int dy = (int) (event.getRawY() - downY);
+                        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+                            moved = true;
+                        }
+                        islandParams.x = startX + dx;
+                        islandParams.y = startY + dy;
                         windowManager.updateViewLayout(islandView, islandParams);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!moved) {
+                            islandView.toggleExpanded();
+                        }
                         return true;
                     default:
                         return false;
@@ -217,6 +224,35 @@ public class FloatingRecorderService extends Service {
         islandParams.y = dp(88);
         windowManager.addView(islandView, islandParams);
         updateIslandState();
+    }
+
+    private void requestStartRecording() {
+        if (recording || countingDown) {
+            return;
+        }
+        if (countdown) {
+            startCountdown(3);
+        } else {
+            startRecording();
+        }
+    }
+
+    private void startCountdown(final int seconds) {
+        countingDown = true;
+        if (islandView != null) {
+            islandView.setIdle("Başlıyor: " + seconds, "Hazırlan • ada ekranda kalacak");
+        }
+        if (seconds <= 0) {
+            countingDown = false;
+            startRecording();
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                startCountdown(seconds - 1);
+            }
+        }, 1000);
     }
 
     private void startRecording() {
@@ -250,8 +286,13 @@ public class FloatingRecorderService extends Service {
             );
             mediaRecorder.start();
             recording = true;
+            paused = false;
+            recordStartedAt = System.currentTimeMillis();
+            elapsedBeforePause = 0L;
             startAsForeground("Kayıt devam ediyor");
             updateIslandState();
+            handler.removeCallbacks(ticker);
+            handler.post(ticker);
         } catch (Exception exception) {
             cleanupRecorder();
             toast("Kayıt başlatılamadı: " + exception.getMessage());
@@ -284,8 +325,31 @@ public class FloatingRecorderService extends Service {
         mediaRecorder.prepare();
     }
 
+    private void togglePause() {
+        if (!recording || mediaRecorder == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return;
+        }
+        try {
+            if (paused) {
+                mediaRecorder.resume();
+                recordStartedAt = System.currentTimeMillis();
+                paused = false;
+            } else {
+                mediaRecorder.pause();
+                elapsedBeforePause += System.currentTimeMillis() - recordStartedAt;
+                paused = true;
+            }
+            updateIslandState();
+        } catch (RuntimeException exception) {
+            toast("Pause desteklenmedi");
+        }
+    }
+
     private void stopRecording(boolean notify) {
+        countingDown = false;
+        handler.removeCallbacks(ticker);
         if (!recording && mediaRecorder == null) {
+            updateIslandState();
             return;
         }
         try {
@@ -295,6 +359,7 @@ public class FloatingRecorderService extends Service {
         } catch (RuntimeException ignored) {
         }
         recording = false;
+        paused = false;
         cleanupRecorder();
         startAsForeground("Yüzen ada hazır");
         updateIslandState();
@@ -329,12 +394,25 @@ public class FloatingRecorderService extends Service {
     }
 
     private void updateIslandState() {
-        if (stateText == null || recordButton == null) {
+        if (islandView == null) {
             return;
         }
-        stateText.setText(recording ? "Kayıt alınıyor" : "Hazır • sürükle-bırak");
-        recordButton.setText(recording ? "STOP" : "REC");
-        recordButton.setBackground(rounded(recording ? COLOR_GO : COLOR_RECORD, dp(16)));
+        if (recording) {
+            islandView.setRecording(formatElapsed(), highQuality ? "60 FPS / HQ" : "30 FPS / Eco", recordAudio && hasAudioPermission(), paused);
+        } else if (!countingDown) {
+            islandView.setIdle("Hazır", "Sürükle • dokun: küçült/büyüt");
+        }
+    }
+
+    private String formatElapsed() {
+        long elapsed = elapsedBeforePause;
+        if (recording && !paused) {
+            elapsed += System.currentTimeMillis() - recordStartedAt;
+        }
+        long totalSeconds = elapsed / 1000L;
+        long minutes = totalSeconds / 60L;
+        long seconds = totalSeconds % 60L;
+        return String.format(Locale.US, "%02d:%02d", minutes, seconds);
     }
 
     private void openSettings() {
@@ -375,11 +453,7 @@ public class FloatingRecorderService extends Service {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
-        NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "Screen Island Recorder",
-                NotificationManager.IMPORTANCE_LOW
-        );
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Screen Island Recorder", NotificationManager.IMPORTANCE_LOW);
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.createNotificationChannel(channel);
@@ -387,50 +461,18 @@ public class FloatingRecorderService extends Service {
     }
 
     private boolean hasAudioPermission() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
-                || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean canDrawOverlays() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this);
     }
 
-    private void toast(final String message) {
+    private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
-    private Button smallButton(String text, int bg, int fg, View.OnClickListener listener) {
-        Button button = new Button(this);
-        button.setAllCaps(false);
-        button.setText(text);
-        button.setTextColor(fg);
-        button.setTextSize(12f);
-        button.setMinHeight(0);
-        button.setMinWidth(0);
-        button.setPadding(dp(10), dp(5), dp(10), dp(5));
-        button.setBackground(rounded(bg, dp(16)));
-        button.setOnClickListener(listener);
-        return button;
-    }
-
-    private GradientDrawable rounded(int color, int radius) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
-        drawable.setCornerRadius(radius);
-        return drawable;
-    }
-
-    private LinearLayout.LayoutParams wrapWrap() {
-        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-    }
-
-    private LinearLayout.LayoutParams wrapWrapWithMargins(int left, int top, int right, int bottom) {
-        LinearLayout.LayoutParams params = wrapWrap();
-        params.setMargins(left, top, right, bottom);
-        return params;
-    }
-
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return IslandTheme.dp(this, value);
     }
 }

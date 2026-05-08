@@ -43,6 +43,8 @@ public class MainActivity extends Activity {
     private LinearLayout content;
     private Switch microphoneSwitch;
     private Switch highQualitySwitch;
+    private Switch countdownSwitch;
+    private Switch compactSwitch;
     private TextView statusText;
 
     @Override
@@ -161,13 +163,26 @@ public class MainActivity extends Activity {
         highQualitySwitch.setTextColor(COLOR_TEXT);
         highQualitySwitch.setChecked(true);
         card.addView(highQualitySwitch, matchWrap());
+
+        countdownSwitch = new Switch(this);
+        countdownSwitch.setText("REC basınca 3 saniye geri sayım");
+        countdownSwitch.setTextColor(COLOR_TEXT);
+        countdownSwitch.setChecked(true);
+        card.addView(countdownSwitch, matchWrap());
+
+        compactSwitch = new Switch(this);
+        compactSwitch.setText("Ada kompakt başlasın");
+        compactSwitch.setTextColor(COLOR_TEXT);
+        compactSwitch.setChecked(false);
+        card.addView(compactSwitch, matchWrap());
+
         content.addView(card, matchWrapWithMargins(0, 0, 0, dp(14)));
     }
 
     private void addTipsCard() {
         LinearLayout card = card();
         card.addView(cardTitle("Nasıl çalışır?", COLOR_TEXT), matchWrap());
-        card.addView(bodyText("1. Open the recorder'a bas\n2. Android ekran yakalama iznini ver\n3. Yüzen adadan REC ile başlat, STOP ile kaydı bitir\n4. Videolar uygulamanın Movies/ScreenIsland klasörüne kaydedilir"), matchWrap());
+        card.addView(bodyText("1. Open the recorder'a bas\n2. Android ekran yakalama iznini ver\n3. Yüzen adadan REC / PAUSE / STOP kullan\n4. Adayı sürükle, dokunup küçült/büyüt\n5. Videolar Movies/ScreenIsland klasörüne kaydedilir"), matchWrap());
         content.addView(card, matchWrapWithMargins(0, 0, 0, dp(14)));
     }
 
@@ -198,6 +213,8 @@ public class MainActivity extends Activity {
         service.putExtra(FloatingRecorderService.EXTRA_RESULT_DATA, data);
         service.putExtra(FloatingRecorderService.EXTRA_RECORD_AUDIO, microphoneSwitch.isChecked() && hasAudioPermission());
         service.putExtra(FloatingRecorderService.EXTRA_HIGH_QUALITY, highQualitySwitch.isChecked());
+        service.putExtra(FloatingRecorderService.EXTRA_COUNTDOWN, countdownSwitch.isChecked());
+        service.putExtra(FloatingRecorderService.EXTRA_COMPACT, compactSwitch.isChecked());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(service);
         } else {
