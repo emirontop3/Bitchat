@@ -1,49 +1,28 @@
 package com.example.helloworld;
 
 import android.app.Activity;
+import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.os.Bundle;
-import android.text.method.ScrollingMovementMethod;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
 import java.util.Locale;
-import java.util.Random;
 
 public class MainActivity extends Activity {
-    private final Random random = new Random();
-    private final StringBuilder logBuilder = new StringBuilder();
-    private TextView logView;
+    private static final String[] SCPS = {"SCP-173", "SCP-096", "SCP-049"};
 
-    private static final String[] PRISON_BLOCKS = {
-            "A-Blok / D-Class Düşük Risk",
-            "B-Blok / D-Class Orta Risk",
-            "C-Blok / İtaatsiz Mahkum",
-            "D-Blok / İzole Kanat"
-    };
-
-    private static final String[] PERSONNEL_PACKS = {
-            "2 Güvenlik + 1 Araştırmacı",
-            "3 Güvenlik + 1 Medikal",
-            "1 MTF Lider + 2 Güvenlik",
-            "2 MTF + 1 Medikal + 1 Araştırmacı"
-    };
-
-    private static final String[] ESCORT_SQUADS = {
-            "Site Alpha Escort",
-            "MTF Epsilon-11",
-            "Rapid Response Team",
-            "Ağır Zırhlı Takım"
-    };
-
-    private static final String[] SCPS = {
-            "SCP-173", "SCP-096", "SCP-049"
-    };
+    private GameView gameView;
+    private TextView statusView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,150 +30,200 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(30, 30, 30, 30);
-        root.setBackgroundColor(Color.parseColor("#0D1117"));
+        root.setBackgroundColor(Color.parseColor("#0B0F16"));
+        root.setPadding(24, 24, 24, 24);
 
         TextView title = new TextView(this);
         title.setText("Scp Rp");
         title.setTextSize(30f);
-        title.setTextColor(Color.parseColor("#E6EDF3"));
+        title.setTextColor(Color.WHITE);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Sıfırdan kurulan görev sistemi: Hapishane > Ekip > Asker Sevki > Cage Refakati");
-        subtitle.setTextColor(Color.parseColor("#9FB0C0"));
-        subtitle.setPadding(0, 10, 0, 20);
+        Spinner scpSpinner = new Spinner(this);
+        scpSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, SCPS));
 
-        Spinner blockSpinner = createSpinner(PRISON_BLOCKS);
-        Spinner personnelSpinner = createSpinner(PERSONNEL_PACKS);
-        Spinner squadSpinner = createSpinner(ESCORT_SQUADS);
-        Spinner scpSpinner = createSpinner(SCPS);
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
 
-        Button startButton = new Button(this);
-        startButton.setText("Görevi Başlat");
+        Button start = new Button(this);
+        start.setText("Görev Başlat");
+        Button lockdown = new Button(this);
+        lockdown.setText("Lockdown");
 
-        Button lockdownButton = new Button(this);
-        lockdownButton.setText("Acil Kilitlenme");
+        controls.addView(start, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        controls.addView(lockdown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        Button resetButton = new Button(this);
-        resetButton.setText("Log Sıfırla");
+        statusView = new TextView(this);
+        statusView.setTextColor(Color.parseColor("#C7D4E5"));
+        statusView.setText("Harita hazır. SCP seçip görev başlat.");
+        statusView.setPadding(0, 12, 0, 12);
 
-        logView = new TextView(this);
-        logView.setTextColor(Color.parseColor("#D2DCE7"));
-        logView.setBackgroundColor(Color.parseColor("#161B22"));
-        logView.setPadding(20, 20, 20, 20);
-        logView.setMinHeight(900);
-        logView.setMovementMethod(new ScrollingMovementMethod());
+        gameView = new GameView(this);
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(logView);
-
-        startButton.setOnClickListener(v -> {
-            String block = blockSpinner.getSelectedItem().toString();
-            String personnel = personnelSpinner.getSelectedItem().toString();
-            String squad = squadSpinner.getSelectedItem().toString();
+        start.setOnClickListener(v -> {
             String scp = scpSpinner.getSelectedItem().toString();
-            appendLog(runMission(block, personnel, squad, scp));
-            scrollView.post(() -> scrollView.fullScroll(ScrollView.FOCUS_DOWN));
+            gameView.startMission(scp);
+            statusView.setText("Görev aktif: askerler hapishaneden deneği alıp cage'e götürüyor...");
         });
 
-        lockdownButton.setOnClickListener(v -> appendLog("[ALARM] RED LOCKDOWN aktif. Kapılar mühürlendi, takviye çağrıldı."));
-
-        resetButton.setOnClickListener(v -> {
-            logBuilder.setLength(0);
-            logView.setText("");
-            appendLog("[SİSTEM] Konsol sıfırlandı.");
+        lockdown.setOnClickListener(v -> {
+            gameView.triggerLockdown();
+            statusView.setText("LOCKDOWN: Kapılar kapandı, birimler geri çekiliyor.");
         });
 
         root.addView(title);
-        root.addView(subtitle);
-        root.addView(blockSpinner);
-        root.addView(personnelSpinner);
-        root.addView(squadSpinner);
         root.addView(scpSpinner);
-        root.addView(startButton);
-        root.addView(lockdownButton);
-        root.addView(resetButton);
-        root.addView(scrollView);
+        root.addView(controls);
+        root.addView(statusView);
+        root.addView(gameView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+        ));
 
         setContentView(root);
-
-        appendLog("[MAP] Site-TR01 tek kat geniş plan aktif: Hapishane, Hazırlık, Koridor, Cage Bloğu.");
-        appendLog("[INFO] Seçimleri yap ve görevi başlat. Her turda farklı sonuç alırsın.");
     }
 
-    private Spinner createSpinner(String[] items) {
-        Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, items));
-        return spinner;
-    }
+    private static class GameView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Handler handler = new Handler(Looper.getMainLooper());
 
-    private String runMission(String block, String personnel, String squad, String scp) {
-        int discipline = rand(60, 100);
-        int stress = rand(25, 95);
-        int prep = rand(55, 100);
-        int readiness = clamp((discipline + prep) / 2 - (stress / 4), 30, 98);
+        private float soldierX = 120;
+        private float soldierY = 520;
+        private float subjectX = 90;
+        private float subjectY = 520;
+        private float cageX = 860;
+        private float cageY = 260;
 
-        String escortLine = buildEscortLine(scp, squad);
-        String reactionLine = buildReactionLine(scp, readiness);
-        String resultLine = buildResultLine(readiness, stress);
+        private boolean missionRunning = false;
+        private boolean lockdown = false;
+        private String scp = "SCP-173";
 
-        return String.format(Locale.ROOT,
-                "[FAZ-1] %s noktasından denek çıkarıldı.\n" +
-                        "[FAZ-2] Personel paketi: %s\n" +
-                        "[FAZ-3] %s sevk edildi, ekipman ve kimlik doğrulama tamam.\n" +
-                        "[FAZ-4] Hazırlık odası: sedasyon, nabız, kamera sync -> Prep %d/100\n" +
-                        "[FAZ-5] %s\n" +
-                        "[FAZ-6] Cage hedefi: %s | %s\n" +
-                        "[METRİK] Disiplin=%d Stress=%d Readiness=%d\n" +
-                        "[SONUÇ] %s\n",
-                block, personnel, squad, prep, escortLine, scp, reactionLine, discipline, stress, readiness, resultLine);
-    }
+        private final Runnable tick = new Runnable() {
+            @Override
+            public void run() {
+                if (missionRunning && !lockdown) {
+                    moveToCage();
+                    invalidate();
+                    handler.postDelayed(this, 16);
+                }
+            }
+        };
 
-    private String buildEscortLine(String scp, String squad) {
-        if ("SCP-173".equals(scp)) {
-            return squad + " göz kırpma senkronu ile üçlü görüş hattı kurdu.";
+        public GameView(Context context) {
+            super(context);
+            setBackgroundColor(Color.parseColor("#101826"));
         }
-        if ("SCP-096".equals(scp)) {
-            return squad + " vizör kapalı, dolaylı kamera feed ile ilerledi.";
+
+        void startMission(String selectedScp) {
+            scp = selectedScp;
+            lockdown = false;
+            missionRunning = true;
+            soldierX = 120;
+            soldierY = 520;
+            subjectX = 90;
+            subjectY = 520;
+            handler.removeCallbacks(tick);
+            handler.post(tick);
+            invalidate();
         }
-        return squad + " medikal bariyer ile 049 sözlü temas protokolünü sürdürdü.";
-    }
 
-    private String buildReactionLine(String scp, int readiness) {
-        if ("SCP-173".equals(scp)) {
-            return readiness >= 75
-                    ? "173 saldırı penceresi bulamadı."
-                    : "173 kısa senkron boşluğunda agresif hamle denedi.";
+        void triggerLockdown() {
+            lockdown = true;
+            missionRunning = false;
+            handler.removeCallbacks(tick);
+            invalidate();
         }
-        if ("SCP-096".equals(scp)) {
-            return readiness >= 70
-                    ? "096 yüz teması olmadan pasif-ajite kaldı."
-                    : "096 için yüz görme alarmı kritik eşiğe yaklaştı.";
+
+        private void moveToCage() {
+            float speed = 2.8f;
+
+            if (soldierX < 430) {
+                soldierX += speed;
+                subjectX += speed;
+            } else if (soldierY > 260) {
+                soldierY -= speed;
+                subjectY -= speed;
+            } else if (soldierX < cageX - 70) {
+                soldierX += speed;
+                subjectX += speed;
+            } else {
+                missionRunning = false;
+                handler.removeCallbacks(tick);
+            }
         }
-        return readiness >= 72
-                ? "049 kontrollü kaldı, temas mesafesi korundu."
-                : "049 yakın temasla 'tedavi' girişimi denedi.";
-    }
 
-    private String buildResultLine(int readiness, int stress) {
-        int score = readiness - (stress / 5);
-        if (score >= 75) return "Mükemmel - kayıpsız operasyon.";
-        if (score >= 58) return "Başarılı - küçük sapmalar yönetildi.";
-        return "Kritik - geri çekilme ve ikinci tim gerekli.";
-    }
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            drawMap(canvas);
+            drawUnits(canvas);
+            drawHud(canvas);
+        }
 
-    private int rand(int min, int max) {
-        return min + random.nextInt(max - min + 1);
-    }
+        private void drawMap(Canvas c) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#202D3F"));
+            c.drawRect(40, 440, 300, 600, paint); // prison
+            c.drawRect(360, 440, 560, 600, paint); // prep
+            c.drawRect(620, 180, 980, 340, paint); // cage area
 
-    private int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
+            paint.setColor(Color.parseColor("#2F3F56"));
+            c.drawRect(300, 500, 360, 540, paint); // gate1
+            c.drawRect(560, 500, 620, 540, paint); // gate2
+            c.drawRect(620, 250, 680, 290, paint); // gate3
 
-    private void appendLog(String line) {
-        if (logBuilder.length() > 0) logBuilder.append("\n\n");
-        logBuilder.append(line);
-        logView.setText(logBuilder.toString());
+            paint.setColor(Color.parseColor("#91A6C6"));
+            paint.setTextSize(30f);
+            c.drawText("Hapishane", 70, 500, paint);
+            c.drawText("Hazırlık", 390, 500, paint);
+            c.drawText("SCP Cage", 700, 250, paint);
+
+            if (lockdown) {
+                paint.setColor(Color.RED);
+                paint.setTextSize(44f);
+                c.drawText("LOCKDOWN", 370, 120, paint);
+            }
+        }
+
+        private void drawUnits(Canvas c) {
+            paint.setStyle(Paint.Style.FILL);
+
+            paint.setColor(Color.parseColor("#4ADE80"));
+            c.drawCircle(soldierX, soldierY, 24, paint);
+
+            paint.setColor(Color.parseColor("#F59E0B"));
+            c.drawCircle(subjectX, subjectY, 18, paint);
+
+            paint.setColor(Color.parseColor("#EF4444"));
+            c.drawCircle(cageX, cageY, 26, paint);
+
+            paint.setColor(Color.WHITE);
+            paint.setTextSize(24f);
+            c.drawText("Asker", soldierX - 30, soldierY - 30, paint);
+            c.drawText("Denek", subjectX - 30, subjectY + 42, paint);
+            c.drawText(scp, cageX - 45, cageY - 36, paint);
+        }
+
+        private void drawHud(Canvas c) {
+            paint.setColor(Color.parseColor("#AFC3E6"));
+            paint.setTextSize(24f);
+
+            String phase;
+            if (lockdown) {
+                phase = "Durum: Lockdown";
+            } else if (!missionRunning && soldierX >= cageX - 70) {
+                phase = "Durum: Teslimat tamamlandı";
+            } else if (soldierX < 430) {
+                phase = "Durum: Hapishaneden çıkış";
+            } else if (soldierY > 260) {
+                phase = "Durum: Koridor geçişi";
+            } else {
+                phase = "Durum: Cage yaklaşımı";
+            }
+
+            c.drawText(phase, 40, 60, paint);
+            c.drawText(String.format(Locale.ROOT, "Koordinat Asker: (%.0f, %.0f)", soldierX, soldierY), 40, 92, paint);
+        }
     }
 }
