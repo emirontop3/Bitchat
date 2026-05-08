@@ -41,15 +41,15 @@ jobs:
       - name: Prepare direct APK file
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/Bitchat-debug.apk
-          test -s dist/Bitchat-debug.apk
-          ls -lh dist/Bitchat-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Bitchatter-debug.apk
+          test -s dist/Bitchatter-debug.apk
+          ls -lh dist/Bitchatter-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Bitchat-debug-apk
-          path: dist/Bitchat-debug.apk
+          name: Bitchatter-debug-apk
+          path: dist/Bitchatter-debug.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -59,7 +59,7 @@ jobs:
           TAG_NAME: apk-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           gh release create "$TAG_NAME" \
-            dist/Bitchat-debug.apk#Bitchat-debug.apk \
+            dist/Bitchatter-debug.apk#Bitchatter-debug.apk \
             --target "$GITHUB_SHA" \
-            --title "Bitchat APK ${{ github.run_number }}" \
-            --notes "Direct APK download for commit $GITHUB_SHA. Download the attached Bitchat-debug.apk file directly."
+            --title "bitchatter APK ${{ github.run_number }}" \
+            --notes "Direct APK download for commit $GITHUB_SHA. Download the attached Bitchatter-debug.apk file directly."
