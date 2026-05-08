@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -19,9 +20,11 @@ import android.widget.TextView;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final String[] SCPS = {"SCP-173", "SCP-096", "SCP-049"};
+    private static final String[] SCPS = {
+            "SCP-173", "SCP-096", "SCP-049", "SCP-106", "SCP-939", "SCP-682", "SCP-035", "SCP-999"
+    };
 
-    private GameView gameView;
+    private SiteMapView siteMapView;
     private TextView statusView;
 
     @Override
@@ -30,8 +33,8 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#0B0F16"));
-        root.setPadding(24, 24, 24, 24);
+        root.setBackgroundColor(Color.parseColor("#090E16"));
+        root.setPadding(20, 20, 20, 20);
 
         TextView title = new TextView(this);
         title.setText("Scp Rp");
@@ -42,40 +45,50 @@ public class MainActivity extends Activity {
         Spinner scpSpinner = new Spinner(this);
         scpSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, SCPS));
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
 
         Button start = new Button(this);
-        start.setText("Görev Başlat");
+        start.setText("Operasyon Başlat");
+
         Button lockdown = new Button(this);
         lockdown.setText("Lockdown");
 
-        controls.addView(start, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        controls.addView(lockdown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button reset = new Button(this);
+        reset.setText("Reset");
+
+        actions.addView(start, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        actions.addView(lockdown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        actions.addView(reset, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         statusView = new TextView(this);
-        statusView.setTextColor(Color.parseColor("#C7D4E5"));
-        statusView.setText("Harita hazır. SCP seçip görev başlat.");
-        statusView.setPadding(0, 12, 0, 12);
+        statusView.setTextColor(Color.parseColor("#D7E2F2"));
+        statusView.setText("2D Site haritası hazır: Ofis, Personel, Askeri Bölge, 3 Cage ve bağlantı yolları aktif.");
+        statusView.setPadding(0, 10, 0, 10);
 
-        gameView = new GameView(this);
+        siteMapView = new SiteMapView(this);
 
         start.setOnClickListener(v -> {
             String scp = scpSpinner.getSelectedItem().toString();
-            gameView.startMission(scp);
-            statusView.setText("Görev aktif: askerler hapishaneden deneği alıp cage'e götürüyor...");
+            siteMapView.startOperation(scp);
+            statusView.setText("Görev başladı: asker ve personel deneği seçili cage'e götürüyor -> " + scp);
         });
 
         lockdown.setOnClickListener(v -> {
-            gameView.triggerLockdown();
-            statusView.setText("LOCKDOWN: Kapılar kapandı, birimler geri çekiliyor.");
+            siteMapView.setLockdown(true);
+            statusView.setText("KIRMIZI ALARM: tüm halkalar kırmızı, geçiş kapıları kilitli.");
+        });
+
+        reset.setOnClickListener(v -> {
+            siteMapView.resetSimulation();
+            statusView.setText("Harita sıfırlandı, yeni senaryoya hazır.");
         });
 
         root.addView(title);
         root.addView(scpSpinner);
-        root.addView(controls);
+        root.addView(actions);
         root.addView(statusView);
-        root.addView(gameView, new LinearLayout.LayoutParams(
+        root.addView(siteMapView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1f
@@ -84,146 +97,248 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
-    private static class GameView extends View {
+    private static class SiteMapView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Handler handler = new Handler(Looper.getMainLooper());
 
-        private float soldierX = 120;
-        private float soldierY = 520;
-        private float subjectX = 90;
-        private float subjectY = 520;
-        private float cageX = 860;
-        private float cageY = 260;
+        // Units
+        private float soldierX = 180;
+        private float soldierY = 620;
+        private float staffX = 140;
+        private float staffY = 620;
+        private float subjectX = 100;
+        private float subjectY = 620;
 
-        private boolean missionRunning = false;
+        // Targets
+        private float[] cageXs = {770, 900, 1030};
+        private float cageY = 190;
+        private int targetCage = 0;
+        private String selectedScp = "SCP-173";
+
+        private boolean running = false;
         private boolean lockdown = false;
-        private String scp = "SCP-173";
+        private int phase = 0;
 
-        private final Runnable tick = new Runnable() {
+        private final Runnable gameLoop = new Runnable() {
             @Override
             public void run() {
-                if (missionRunning && !lockdown) {
-                    moveToCage();
+                if (running && !lockdown) {
+                    updateMovement();
                     invalidate();
                     handler.postDelayed(this, 16);
                 }
             }
         };
 
-        public GameView(Context context) {
+        public SiteMapView(Context context) {
             super(context);
-            setBackgroundColor(Color.parseColor("#101826"));
+            setBackgroundColor(Color.parseColor("#121C2B"));
         }
 
-        void startMission(String selectedScp) {
-            scp = selectedScp;
+        void startOperation(String scp) {
+            selectedScp = scp;
             lockdown = false;
-            missionRunning = true;
-            soldierX = 120;
-            soldierY = 520;
-            subjectX = 90;
-            subjectY = 520;
-            handler.removeCallbacks(tick);
-            handler.post(tick);
+            running = true;
+            phase = 1;
+            targetCage = pickCageForScp(scp);
+            soldierX = 180;
+            soldierY = 620;
+            staffX = 140;
+            staffY = 620;
+            subjectX = 100;
+            subjectY = 620;
+            handler.removeCallbacks(gameLoop);
+            handler.post(gameLoop);
             invalidate();
         }
 
-        void triggerLockdown() {
-            lockdown = true;
-            missionRunning = false;
-            handler.removeCallbacks(tick);
-            invalidate();
-        }
-
-        private void moveToCage() {
-            float speed = 2.8f;
-
-            if (soldierX < 430) {
-                soldierX += speed;
-                subjectX += speed;
-            } else if (soldierY > 260) {
-                soldierY -= speed;
-                subjectY -= speed;
-            } else if (soldierX < cageX - 70) {
-                soldierX += speed;
-                subjectX += speed;
-            } else {
-                missionRunning = false;
-                handler.removeCallbacks(tick);
+        void setLockdown(boolean enabled) {
+            lockdown = enabled;
+            running = !enabled && running;
+            if (enabled) {
+                handler.removeCallbacks(gameLoop);
+            } else if (running) {
+                handler.post(gameLoop);
             }
+            invalidate();
+        }
+
+        void resetSimulation() {
+            running = false;
+            lockdown = false;
+            phase = 0;
+            selectedScp = "SCP-173";
+            soldierX = 180;
+            soldierY = 620;
+            staffX = 140;
+            staffY = 620;
+            subjectX = 100;
+            subjectY = 620;
+            handler.removeCallbacks(gameLoop);
+            invalidate();
+        }
+
+        private int pickCageForScp(String scp) {
+            if ("SCP-173".equals(scp) || "SCP-682".equals(scp)) return 0;
+            if ("SCP-096".equals(scp) || "SCP-106".equals(scp) || "SCP-035".equals(scp)) return 1;
+            return 2;
+        }
+
+        private void updateMovement() {
+            float targetX = cageXs[targetCage] - 50;
+            float speed = 2.6f;
+
+            // phase1: from military to office corridor
+            if (soldierX < 420 && phase == 1) {
+                moveAll(speed, 0);
+            } else if (soldierY > 430 && phase <= 2) {
+                phase = 2;
+                moveAll(0, -speed);
+            } else if (soldierX < 700 && phase <= 3) {
+                phase = 3;
+                moveAll(speed, 0);
+            } else if (soldierY > cageY + 20 && phase <= 4) {
+                phase = 4;
+                moveAll(0, -speed);
+            } else if (soldierX < targetX && phase <= 5) {
+                phase = 5;
+                moveAll(speed, 0);
+            } else {
+                phase = 6;
+                running = false;
+                handler.removeCallbacks(gameLoop);
+            }
+        }
+
+        private void moveAll(float dx, float dy) {
+            soldierX += dx;
+            soldierY += dy;
+            staffX += dx;
+            staffY += dy;
+            subjectX += dx;
+            subjectY += dy;
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            drawMap(canvas);
+            drawRoadNetwork(canvas);
+            drawBuildings(canvas);
+            drawCages(canvas);
             drawUnits(canvas);
             drawHud(canvas);
         }
 
-        private void drawMap(Canvas c) {
+        private void drawRoadNetwork(Canvas c) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(24f);
+            paint.setColor(lockdown ? Color.parseColor("#B91C1C") : Color.parseColor("#2D415D"));
+
+            Path main = new Path();
+            main.moveTo(120, 630);
+            main.lineTo(420, 630);
+            main.lineTo(420, 430);
+            main.lineTo(700, 430);
+            main.lineTo(700, 210);
+            main.lineTo(1040, 210);
+            c.drawPath(main, paint);
+
+            paint.setStrokeWidth(10f);
+            paint.setColor(lockdown ? Color.parseColor("#EF4444") : Color.parseColor("#5B7699"));
+            c.drawCircle(420, 630, 46, paint); // ring 1
+            c.drawCircle(700, 430, 46, paint); // ring 2
+            c.drawCircle(700, 210, 46, paint); // ring 3
+        }
+
+        private void drawBuildings(Canvas c) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.parseColor("#202D3F"));
-            c.drawRect(40, 440, 300, 600, paint); // prison
-            c.drawRect(360, 440, 560, 600, paint); // prep
-            c.drawRect(620, 180, 980, 340, paint); // cage area
 
-            paint.setColor(Color.parseColor("#2F3F56"));
-            c.drawRect(300, 500, 360, 540, paint); // gate1
-            c.drawRect(560, 500, 620, 540, paint); // gate2
-            c.drawRect(620, 250, 680, 290, paint); // gate3
+            // Military
+            paint.setColor(Color.parseColor("#253348"));
+            c.drawRect(40, 540, 260, 710, paint);
+            label(c, "Asker", 85, 620);
 
-            paint.setColor(Color.parseColor("#91A6C6"));
-            paint.setTextSize(30f);
-            c.drawText("Hapishane", 70, 500, paint);
-            c.drawText("Hazırlık", 390, 500, paint);
-            c.drawText("SCP Cage", 700, 250, paint);
+            // Personnel
+            paint.setColor(Color.parseColor("#2A3C53"));
+            c.drawRect(270, 540, 500, 710, paint);
+            label(c, "Personel", 315, 620);
 
-            if (lockdown) {
-                paint.setColor(Color.RED);
-                paint.setTextSize(44f);
-                c.drawText("LOCKDOWN", 370, 120, paint);
+            // Office
+            paint.setColor(Color.parseColor("#324965"));
+            c.drawRect(510, 520, 740, 710, paint);
+            label(c, "Ofis", 585, 620);
+        }
+
+        private void drawCages(Canvas c) {
+            int[] cageColors = {
+                    Color.parseColor("#334155"), Color.parseColor("#3F3F46"), Color.parseColor("#374151")
+            };
+
+            for (int i = 0; i < 3; i++) {
+                float left = 730 + (i * 130);
+                float right = left + 110;
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(cageColors[i]);
+                c.drawRect(left, 140, right, 280, paint);
+
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(4f);
+                paint.setColor(i == targetCage ? Color.parseColor("#22D3EE") : Color.parseColor("#94A3B8"));
+                c.drawRect(left, 140, right, 280, paint);
+
+                label(c, "CAGE " + (i + 1), left + 20, 215);
             }
         }
 
         private void drawUnits(Canvas c) {
             paint.setStyle(Paint.Style.FILL);
 
-            paint.setColor(Color.parseColor("#4ADE80"));
-            c.drawCircle(soldierX, soldierY, 24, paint);
+            paint.setColor(Color.parseColor("#22C55E"));
+            c.drawCircle(soldierX, soldierY, 18, paint);
+
+            paint.setColor(Color.parseColor("#60A5FA"));
+            c.drawCircle(staffX, staffY, 15, paint);
 
             paint.setColor(Color.parseColor("#F59E0B"));
-            c.drawCircle(subjectX, subjectY, 18, paint);
+            c.drawCircle(subjectX, subjectY, 14, paint);
 
             paint.setColor(Color.parseColor("#EF4444"));
-            c.drawCircle(cageX, cageY, 26, paint);
+            c.drawCircle(cageXs[targetCage], cageY, 20, paint);
 
             paint.setColor(Color.WHITE);
-            paint.setTextSize(24f);
-            c.drawText("Asker", soldierX - 30, soldierY - 30, paint);
-            c.drawText("Denek", subjectX - 30, subjectY + 42, paint);
-            c.drawText(scp, cageX - 45, cageY - 36, paint);
+            paint.setTextSize(22f);
+            c.drawText("A", soldierX - 6, soldierY + 7, paint);
+            c.drawText("P", staffX - 6, staffY + 7, paint);
+            c.drawText("D", subjectX - 6, subjectY + 7, paint);
+            c.drawText(selectedScp, cageXs[targetCage] - 45, cageY - 28, paint);
         }
 
         private void drawHud(Canvas c) {
-            paint.setColor(Color.parseColor("#AFC3E6"));
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#DDE8FA"));
             paint.setTextSize(24f);
 
-            String phase;
+            String state;
             if (lockdown) {
-                phase = "Durum: Lockdown";
-            } else if (!missionRunning && soldierX >= cageX - 70) {
-                phase = "Durum: Teslimat tamamlandı";
-            } else if (soldierX < 430) {
-                phase = "Durum: Hapishaneden çıkış";
-            } else if (soldierY > 260) {
-                phase = "Durum: Koridor geçişi";
+                state = "Durum: LOCKDOWN";
+            } else if (phase == 0) {
+                state = "Durum: Beklemede";
+            } else if (phase == 6) {
+                state = "Durum: Teslimat tamamlandı";
             } else {
-                phase = "Durum: Cage yaklaşımı";
+                state = "Durum: Faz " + phase;
             }
 
-            c.drawText(phase, 40, 60, paint);
-            c.drawText(String.format(Locale.ROOT, "Koordinat Asker: (%.0f, %.0f)", soldierX, soldierY), 40, 92, paint);
+            c.drawText(state, 40, 60, paint);
+            c.drawText(String.format(Locale.ROOT, "Hedef: %s -> Cage %d", selectedScp, targetCage + 1), 40, 95, paint);
+            c.drawText("Yol Ağı: Asker / Personel / Ofis / 3x Cage bağlı", 40, 130, paint);
+        }
+
+        private void label(Canvas c, String text, float x, float y) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#CBD5E1"));
+            paint.setTextSize(24f);
+            c.drawText(text, x, y, paint);
         }
     }
 }
