@@ -1,30 +1,62 @@
-name: Build APK
+name: Build Direct APK
 
 on:
   workflow_dispatch:
   push:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-apk:
+    name: Build and publish APK
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.4
 
-      - name: Upload APK
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --no-daemon
+
+      - name: Prepare direct APK file
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Bitchat-debug.apk
+          test -s dist/Bitchat-debug.apk
+          ls -lh dist/Bitchat-debug.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: Bitchat-debug-apk
+          path: dist/Bitchat-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish direct APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: apk-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          gh release create "$TAG_NAME" \
+            dist/Bitchat-debug.apk#Bitchat-debug.apk \
+            --target "$GITHUB_SHA" \
+            --title "Bitchat APK ${{ github.run_number }}" \
+            --notes "Direct APK download for commit $GITHUB_SHA. Download the attached Bitchat-debug.apk file directly."
