@@ -3,23 +3,25 @@ plugins {
 }
 
 android {
-    namespace "com.example.helloworld"
+    namespace 'com.example.helloworld'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.example.helloworld"
-        minSdk 21
+        applicationId 'com.example.helloworld'
+        minSdk 23
         targetSdk 34
         versionCode 1
-        versionName "1.0"
+        versionName '1.0'
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+
         release {
             minifyEnabled false
         }
     }
-}
-
-dependencies {
 }
