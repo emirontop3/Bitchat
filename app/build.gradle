@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.screenisland.recorder'
+    namespace 'com.skinmatch.cloth'
     compileSdk 34
 
     defaultConfig {
-        applicationId 'com.screenisland.recorder'
+        applicationId 'com.skinmatch.cloth'
         minSdk 23
         targetSdk 34
         versionCode 1
