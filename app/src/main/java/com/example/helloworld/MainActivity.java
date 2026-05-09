@@ -7,6 +7,7 @@ import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import androidx.activity.OnBackPressedCallback; // Yeni eklenen
 import androidx.appcompat.app.AppCompatActivity;
 import java.util.ArrayList;
 
@@ -39,7 +40,6 @@ public class MainActivity extends AppCompatActivity {
         // Arama Çubuğu Odak Animasyonu
         searchInput.setOnFocusChangeListener((v, hasFocus) -> {
             if (hasFocus) {
-                // Kutu hafifçe yukarı kaysın ve liste belirsin
                 searchBox.animate()
                         .translationY(-20f)
                         .scaleX(1.03f)
@@ -55,17 +55,22 @@ public class MainActivity extends AppCompatActivity {
                         .start();
             }
         });
-    }
 
-    // Geri tuşuna basıldığında animasyonu sıfırla
-    @Override
-    public void onBackPressed() {
-        if (searchInput.hasFocus()) {
-            searchInput.clearFocus();
-            searchBox.animate().translationY(0).scaleX(1f).scaleY(1f).setDuration(300).start();
-            resultsList.animate().alpha(0f).translationY(0).setDuration(300).start();
-        } else {
-            super.onBackPressed();
-        }
+        // HATA VEREN KISMIN YENİ HALİ: Modern Geri Tuşu Yönetimi
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (searchInput.hasFocus()) {
+                    // Arama açıksa kapat ve odağı temizle
+                    searchInput.clearFocus();
+                    searchBox.animate().translationY(0).scaleX(1f).scaleY(1f).setDuration(300).start();
+                    resultsList.animate().alpha(0f).translationY(0).setDuration(300).start();
+                } else {
+                    // Arama açık değilse normal geri işlevini yap (uygulamadan çık/geri git)
+                    setEnabled(false); // Callback'i devre dışı bırak ki sonsuz döngü olmasın
+                    getOnBackPressedDispatcher().onBackPressed();
+                }
+            }
+        });
     }
 }
